@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>QUIC CID 负载均衡迁移演练台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310b981'/%3E%3Ctext x='32' y='42' font-size='24' font-family='Arial' font-weight='bold' text-anchor='middle' fill='%2306101f'%3ECID%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">CID</div>
+      <div>
+        <h1>QUIC 连接 ID 路由演练台</h1>
+        <p>WiFi ↔ 4G 迁移 · 后端扩缩容与排空 · 多 LB / ECMP · 真实 QUIC 包头解析</p>
+      </div>
+    </div>
+    <div class="run-controls">
+      <label>用户 <input id="userCount" type="number" min="8" max="240" value="96" /></label>
+      <label>种子 <input id="seed" type="number" value="20261125" /></label>
+      <button id="rerun">重新模拟</button>
+      <span id="runStatus" class="status-pill">加载中…</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="kpi-grid" id="kpis"></section>
+
+    <section class="panel tracker">
+      <div class="panel-head">
+        <div>
+          <h2>连接轨迹追踪</h2>
+          <p>左侧选择手机用户；点击迁移时刻或连接条，查看地址轨迹、落点后端和逐包路由。</p>
+        </div>
+        <div class="legend">
+          <span><i class="dot cid"></i>CID 固定后端</span>
+          <span><i class="dot old-ok"></i>老哈希幸存</span>
+          <span><i class="dot old-bad"></i>错路/重握手</span>
+          <span><i class="line scale"></i>扩缩容</span>
+          <span><i class="line restart"></i>LB 重启</span>
+        </div>
+      </div>
+      <div class="tracker-grid">
+        <aside class="user-list" id="userList"></aside>
+        <div class="tracker-main">
+          <div id="userSummary" class="user-summary"></div>
+          <div id="migrationChips" class="chips"></div>
+          <div id="migrationDetail" class="migration-detail"></div>
+
+          <h3 class="chart-title">同一用户的后端泳道：连接何时一直落在同一台机器</h3>
+          <div id="swimlanes" class="swimlanes"></div>
+
+          <div class="packet-panel">
+            <div class="packet-head">
+              <div>
+                <h3>逐包解析与路由记录</h3>
+                <p id="packetTraceName">点击上方连接条加载 trace</p>
+              </div>
+              <div class="segmented">
+                <button data-pmode="cid" class="active">CID 模式</button>
+                <button data-pmode="old">地址哈希模式</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>时间</th><th>包头</th><th>源地址</th><th>LB</th><th>期望 → 实际</th><th>状态</th><th>说明</th></tr>
+                </thead>
+                <tbody id="packetRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="two-col">
+      <div class="panel">
+        <div class="panel-head"><div><h2>扩缩容与 LB 事件时刻</h2><p>后端下线前进入 draining；老 CID 继续路由到原后端，直到连接结束。</p></div></div>
+        <div id="lbFleet" class="lb-fleet"></div>
+        <div id="opsTimeline" class="ops-timeline"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div><h2>地址变化轨迹</h2><p id="trajectoryUser">选择用户</p></div></div>
+        <div id="trajectory" class="trajectory"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div><h2>后端负载均匀度</h2><p>上图为每台后端的路由包量；热力图可切换包量和并发连接数。缩容后端的统计时长按在线时间归一化。</p></div>
+        <div class="segmented">
+          <button id="heatCid" class="active">CID</button>
+          <button id="heatOld">老哈希</button>
+          <button id="heatMetric">指标：包量</button>
+        </div>
+      </div>
+      <div id="loadBars" class="load-bars"></div>
+      <div id="heatmap" class="heatmap"></div>
+      <div id="heatAxis" class="heat-axis"></div>
+    </section>
+
+    <section class="two-col">
+      <div class="panel">
+        <div class="panel-head"><div><h2>CID 安全编码与防伪</h2><p>后端生成身份 CID；LB 与后端持有共享密钥，先验 MAC 再解密身份。</p></div></div>
+        <div id="cidSecurity"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div><h2>QUIC 包头分类处理</h2><p>短包头没有 DCID 长度，必须使用部署约定的 20 字节。</p></div></div>
+        <div id="protocolCards" class="protocol-cards"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><div><h2>两种做法总对比</h2></div></div>
+      <div class="table-wrap">
+        <table class="compare-table">
+          <thead><tr><th>指标</th><th>CID 路由</th><th>源地址:端口哈希</th><th>含义</th></tr></thead>
+          <tbody id="compareRows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    本地确定性模拟：QUIC 版本/长短期包头按 RFC 9000 格式构造和解析，加密与 MAC 使用 Go 标准库；传输、视频卡顿和上传结果为简化模型。
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
